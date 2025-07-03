@@ -1,2 +1,11 @@
+# netlify.toml
+
 [build]
+  # Tell Netlify where your functions live
   functions = "netlify/functions"
+
+[functions."gif"]
+  # Ensure the vendored FFmpeg binary is included in the deployment bundle
+  included_files = [
+    "netlify/functions/bin/ffmpeg"
+  ]

@@ -1,75 +1,64 @@
 // netlify/functions/gif.js
-const { spawn }    = require('child_process');
-const ffmpegPath   = require('ffmpeg-static');
+const fs = require('fs');
+const path = require('path');
+const { spawn } = require('child_process');
 
-exports.handler = async (event) => {
-  // 1) Decode the incoming URL
-  const rawUrl = event.queryStringParameters?.video;
-  if (!rawUrl) {
-    return { statusCode: 400, body: 'Missing ?video= URL' };
-  }
-  let videoUrl;
+// Construct the path to the FFmpeg binary inside the bundled function
+const ffmpegPath = path.join(__dirname, '../bin/ffmpeg');
+
+exports.handler = async function(event, context) {
   try {
-    videoUrl = decodeURIComponent(rawUrl);
-  } catch {
-    return { statusCode: 400, body: 'Invalid encoded URL' };
-  }
-
-  // 2) Fetch the MP4 via built-in fetch
-  let videoRes;
-  try {
-    videoRes = await fetch(videoUrl);
-    if (!videoRes.ok) throw new Error(videoRes.statusText);
-  } catch (e) {
-    console.error('Fetch error:', e);
-    return { statusCode: 502, body: 'Error fetching video: ' + e.message };
-  }
-
-  // 3) Spawn ffmpeg reading from stdin, writing GIF to stdout
-  const ff = spawn(ffmpegPath, [
-    '-hide_banner', '-loglevel', 'error',
-    '-i', '-',                        // stdin
-    '-vf', 'fps=10,scale=600:-1:flags=lanczos',
-    '-loop', '0',
-    '-f', 'gif', '-'
-  ]);
-
-  // 4) Stream the video data into ffmpeg.stdin
-  const reader = videoRes.body.getReader();
-  (async () => {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      ff.stdin.write(Buffer.from(value));
+    // Expect a video URL as a query parameter, e.g. ?video=https://example.com/video.mp4
+    const params = event.queryStringParameters || {};
+    const videoUrl = params.video;
+    if (!videoUrl) {
+      return {
+        statusCode: 400,
+        body: 'Missing "video" query parameter specifying the video URL.',
+      };
     }
-    ff.stdin.end();
-  })().catch(err => {
-    console.error('Stream pump error:', err);
-    ff.stdin.end();
-  });
 
-  // 5) Collect output
-  const chunks = [];
-  let stderr = '';
-  ff.stdout.on('data', c => chunks.push(c));
-  ff.stderr.on('data', c => stderr += c);
+    // Define output path in Netlify function's temporary storage
+    const outputPath = '/tmp/output.gif';
+    // Set up FFmpeg arguments to convert the video to a 5-second GIF (320px width, 10fps)
+    const ffmpegArgs = [
+      '-i', videoUrl,       // Input video URL
+      '-t', '5',            // Duration: first 5 seconds
+      '-vf', 'scale=320:-1',// Scale width to 320px, height auto
+      '-r', '10',           // Frame rate 10 fps for output
+      '-y', outputPath      // Overwrite output file if exists, and save to outputPath
+    ];
 
-  // 6) Wait for ffmpeg to finish
-  const code = await new Promise(r => ff.on('close', r));
-  if (code !== 0) {
-    console.error('ffmpeg failed:', stderr);
+    // Spawn the FFmpeg process using the bundled binary
+    const ffmpegProcess = spawn(ffmpegPath, ffmpegArgs);
+
+    // Wait for FFmpeg to finish execution
+    await new Promise((resolve, reject) => {
+      ffmpegProcess.on('error', (error) => reject(error));         // If process fails to start
+      ffmpegProcess.on('close', (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`FFmpeg exited with code ${code}`));
+      });
+    });
+
+    // Read the generated GIF file from the output path
+    const gifBuffer = fs.readFileSync(outputPath);
+    const base64Gif = gifBuffer.toString('base64');  // Convert to base64 for binary response
+
+    // Return the GIF image with proper headers. Use base64 encoding since it's binary data.
+    return {
+      statusCode: 200,
+      headers: {
+        'Content-Type': 'image/gif'
+      },
+      body: base64Gif,
+      isBase64Encoded: true   // Tells Netlify to decode the base64 body back to binary
+    };
+  } catch (err) {
+    console.error('Error in GIF generation function:', err);
     return {
       statusCode: 500,
-      body: 'Conversion failed: ' + stderr.slice(0,200)
+      body: `Server Error: ${err.message}`
     };
   }
-
-  // 7) Return the GIF as base64
-  const gif = Buffer.concat(chunks);
-  return {
-    statusCode: 200,
-    headers: { 'Content-Type': 'image/gif' },
-    body: gif.toString('base64'),
-    isBase64Encoded: true
-  };
 };
