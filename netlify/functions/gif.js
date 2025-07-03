@@ -8,7 +8,7 @@ exports.handler = async (event) => {
     return { statusCode: 400, body: 'Missing ?video= URL' };
   }
 
-  // 1) Fetch MP4 via built-in fetch (Node 18+)
+  // 1) Fetch MP4 via built-in fetch
   let videoRes;
   try {
     videoRes = await fetch(videoUrl);
@@ -28,10 +28,13 @@ exports.handler = async (event) => {
     'pipe:1'
   ]);
 
-  // 3) Pipe video stream into ffmpeg’s stdin
-  videoRes.body.pipe(ff.stdin);
+  // 3) Write the downloaded video into ffmpeg’s stdin
+  const arrayBuffer = await videoRes.arrayBuffer();
+  const inputBuffer = Buffer.from(arrayBuffer);
+  ff.stdin.write(inputBuffer);
+  ff.stdin.end();
 
-  // 4) Collect output GIF bytes
+  // 4) Collect the GIF output
   const chunks = [];
   let stderr = '';
   ff.stdout.on('data', c => chunks.push(c));
@@ -44,7 +47,7 @@ exports.handler = async (event) => {
     return { statusCode: 500, body: 'Conversion failed' };
   }
 
-  // 6) Return GIF in base64
+  // 6) Return the GIF as base64
   const gif = Buffer.concat(chunks);
   return {
     statusCode: 200,
