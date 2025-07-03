@@ -1,7 +1,7 @@
 // netlify/functions/gif.js
 const { spawn } = require('child_process');
 const fetch    = require('node-fetch');
-const path     = require('path');
+const ffmpegStatic = require('ffmpeg-static');
 
 exports.handler = async (event) => {
   // 1) Read the ?video= query parameter
@@ -20,7 +20,7 @@ exports.handler = async (event) => {
   }
 
   // 3) Spawn ffmpeg to convert to GIF
-  const ffmpegPath = path.join(__dirname, '../../ffmpeg/ffmpeg');
+ const ffmpegPath = ffmpegStatic;  // uses the correct Linux binary
   const ff = spawn(ffmpegPath, [
     '-i', 'pipe:0',                // input from stdin
     '-vf', 'fps=10,scale=600:-1:flags=lanczos',
